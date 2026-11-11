@@ -2,6 +2,8 @@
 
 Each folder is a **skill**: a `SKILL.md` playbook plus the scripts and reference files it needs. When `/new` creates a project of the matching type, MegaMan copies the skill into the project so the Claude Code session starts with it.
 
+For what each skill contains, and the files every project gets regardless of type, see **[Project skills and rules](../docs/PROJECT_SKILLS.md)**.
+
 | Folder | Project type | What it carries |
 |---|---|---|
 | `3d-modeling/printable-parametric-parts` | OpenSCAD | Parametric-part workflow, render and feature-map scripts (the labelled drawing from [Protoman](../../protoman/README.md)) |

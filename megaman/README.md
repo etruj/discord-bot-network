@@ -36,6 +36,8 @@ The files that run produces are checked in at [`examples/garden-monitor/`](examp
 
 Some types ship a skill folder (`scaffolds/`) that is copied into the project so the session starts with a playbook, not a blank page. See [`scaffolds/README.md`](scaffolds/README.md).
 
+**[Project skills and rules](docs/PROJECT_SKILLS.md)** explains every file a new project gets (the `LOG.md` rule, `RULES.md`, the phased `PLAN.md`, the prompt patterns) and each type's skill in detail, including how OpenSCAD projects produce their labelled engineering drawing.
+
 | Type | Scaffold |
 |---|---|
 | OpenSCAD (3D print) | `scaffolds/3d-modeling/printable-parametric-parts` |

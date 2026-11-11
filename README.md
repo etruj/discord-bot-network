@@ -47,7 +47,7 @@ flowchart LR
 - **MegaMan is the only one that manages sessions.** Gutsman's optional `/debug` calls MegaMan's code, so a session opened on Gutsman's own source shows up in MegaMan's `/list` under *Bot sessions*.
 - **Boxes are shared.** MegaMan's `/box` and Gutsman write to the same `boxes/` folder.
 - **Protoman is standalone.** It has its own engine, Dockerfile and tests, and works without the other two. (The version in this repo has no `/debug` hook.)
-- **Scaffolding flows from MegaMan.** `/new` stamps out `CLAUDE.md`, `RULES.md`, `PLAN.md`, `SKILLS.md`, `LOG.md` and `tools/setup.sh`, and copies a skill folder for types like OpenSCAD, KiCad or reverse engineering. Protoman's labelled-drawing code ships in the OpenSCAD skill.
+- **Scaffolding flows from MegaMan.** `/new` stamps out `CLAUDE.md`, `RULES.md`, `PLAN.md`, `SKILLS.md`, `LOG.md` and `tools/setup.sh`, and copies a skill folder for types like OpenSCAD, KiCad or reverse engineering. Protoman's labelled-drawing code ships in the OpenSCAD skill. The full guide to these files and skills is [megaman/docs/PROJECT_SKILLS.md](megaman/docs/PROJECT_SKILLS.md).
 
 ## Repository layout
 
