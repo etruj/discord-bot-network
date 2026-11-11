@@ -1,0 +1,28 @@
+[Unit]
+Description=Gutsman (BoxBot) — Discord box builder
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/BoxBot/gutsman.py
+WorkingDirectory=%h/BoxBot
+# The Python logger owns ~/.boxbot.log directly. Send the console stream to the
+# journal instead — appending it to the same file would duplicate every line.
+# View the stream with: journalctl --user -u boxbot -f
+Restart=on-failure
+RestartSec=10
+# Only signal the main gutsman process on stop/restart — NOT the whole cgroup.
+# `/debug` spawns the `cp-boxbot` tmux session (a Claude Code session editing
+# this bot) as a child of gutsman, so it lands in this unit's cgroup even though
+# tmux reparents itself to systemd --user. Under the default
+# KillMode=control-group, `systemctl --user restart boxbot` SIGKILLs that whole
+# cgroup, tearing down the tmux server and the debug session with it — so a
+# debug session that finishes a change and restarts the bot kills itself. The
+# session is meant to outlive the bot process, so kill only PID $MAINPID here;
+# `/debug stop` remains the way to end the session deliberately.
+KillMode=process
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,22 @@
+[Unit]
+Description=Protoman, a Discord sketch-to-part builder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@PYTHON@ @DIR@/protoman.py
+WorkingDirectory=@DIR@
+# Put the OpenSCAD install from scripts/install_openscad.sh on the path.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=10
+# A build is tracing + OpenSCAD, a few hundred MB. Cap the bot so a runaway
+# build can't take the machine with it.
+MemoryHigh=2G
+MemoryMax=3G
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

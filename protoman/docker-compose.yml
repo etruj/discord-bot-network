@@ -1,0 +1,10 @@
+services:
+  protoman:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Parts, the log and per-user state all live here.
+      # :z relabels for SELinux hosts and is ignored elsewhere.
+      - ./data:/data:z
+    mem_limit: 3g

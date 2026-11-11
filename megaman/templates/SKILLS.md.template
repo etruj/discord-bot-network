@@ -1,0 +1,68 @@
+# Skills: {{PROJECT_NAME}}
+
+Reusable prompt patterns for this project. Paste these into the Claude app
+to get consistent, project-aware behaviour across sessions.
+
+## Add a New Feature
+```
+Add a new feature to {{PROJECT_NAME}}:
+- Feature name: [name]
+- What it does: [description]
+- Acceptance criteria: [what done looks like]
+Follow existing patterns in the codebase. Write tests first.
+```
+
+## Fix a Bug
+```
+Fix a bug in {{PROJECT_NAME}}:
+- Where it occurs: [file / function / endpoint]
+- What happens: [actual behaviour]
+- What should happen: [expected behaviour]
+Check for similar issues elsewhere before marking done.
+```
+
+## Write Tests
+```
+Write tests for [module/function] in {{PROJECT_NAME}}.
+Use the existing test style and {{TEST_FRAMEWORK}}.
+Cover: happy path, edge cases, and error cases.
+```
+
+## Code Review
+```
+Review recent changes in {{PROJECT_NAME}}.
+Check for: correctness, test coverage, consistency with existing patterns,
+and any violations of RULES.md.
+Summarise findings and flag anything blocking a merge.
+```
+
+## Refactor
+```
+Refactor [module/area] in {{PROJECT_NAME}}.
+Goal: [readability / performance / structure].
+Do not change external behaviour. Update tests if needed.
+```
+
+## Deploy
+```
+Deploy {{PROJECT_NAME}} to [target].
+Run the full test suite first. If tests pass, build and deploy.
+Report the live URL and confirm the service is healthy.
+```
+
+## Something needs root
+```
+{{PROJECT_NAME}} needs root for: [what — e.g. installing a package, a udev
+rule, mounting an image, binding port 80].
+Put it in tools/setup.sh: short, idempotent, commented, root-only work.
+Then tell me the one-line summary I should send the owner for approval.
+```
+Sessions have no general sudo. the owner approves the script by hash from Discord
+(`/sudo action:approve project:{{PROJECT_NAME}} script:tools/setup.sh`), after
+which `sudo tools/setup.sh` works — and `sudo` commands *inside* it are
+allowed. Editing the file cancels the approval. Only if the long-running
+process itself must be root does `launch.sh` get `SUDO=sudo` and its own
+approval.
+
+## Project-Specific Skills
+{{CUSTOM_SKILLS_SECTION}}

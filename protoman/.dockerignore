@@ -1,0 +1,9 @@
+.git
+.env
+.protoman.json
+.venv
+data
+docs
+examples
+**/__pycache__
+.pytest_cache

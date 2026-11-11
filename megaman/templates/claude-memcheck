@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""claude-memcheck — this session's memory budget, read from its own cgroup.
+
+Installed to ~/.claude/bin/ by claude-pm (source: claude-pm/templates/).
+Prints usage against the session's systemd-scope caps and a verdict:
+    OK        plenty of headroom
+    CAUTION   don't start anything new and heavy
+    STOP      shed load now (emulators, build daemons, parallel jobs)
+Exit status 0 / 1 / 2 matches, so scripts can gate on it:
+    claude-memcheck -q || echo "not now"
+
+The cap is a soft block, not a verdict. When the job genuinely needs more:
+    claude-memcheck --request 12G --reason "Ghidra full analysis, 47 MB binary"
+That files the ask with the bot, which puts it on the owner's phone with a one-tap
+grant. Keep working under the current cap until he answers — a grant is applied
+live, so nothing has to restart.
+"""
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+GB = 1024 ** 3
+argv = sys.argv[1:]
+quiet = "-q" in argv
+STATE_DIR = Path(os.environ.get("CLAUDE_PM_STATE",
+                                Path.home() / ".cache" / "claude-pm"))
+REQ_FILE   = STATE_DIR / "mem_requests.json"
+GRANT_FILE = STATE_DIR / "mem_grants.json"
+
+
+def _arg(flag: str) -> str:
+    """Value after `flag`, or "" — accepts `--flag v` and `--flag=v`."""
+    for i, a in enumerate(argv):
+        if a == flag:
+            return argv[i + 1] if i + 1 < len(argv) else ""
+        if a.startswith(flag + "="):
+            return a.split("=", 1)[1]
+    return ""
+
+
+def _load(path: Path, default):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return default
+
+
+def project_of(scope: str) -> str:
+    """`claude-cp-myproj.scope` → `myproj` (drop the `claude-` and the kind)."""
+    name = scope[:-len(".scope")] if scope.endswith(".scope") else scope
+    if name.startswith("claude-"):
+        name = name[len("claude-"):]
+    return name.split("-", 1)[1] if "-" in name else name
+
+
+def file_request(scope: str, ask: str, reason: str, cur_max) -> int:
+    """Record the ask where the bot's mem_request_loop will find it."""
+    project = project_of(scope)
+    if not project or project == "pm":   # claude-pm.service: not a session
+        print("claude-memcheck: this isn't a capped session — nothing to request.")
+        return 1
+    reqs = _load(REQ_FILE, {})
+    reqs[project] = {"project": project, "scope": scope, "ask_max": ask,
+                     "reason": reason.strip(), "status": "pending",
+                     "cur_max": (f"{cur_max / GB:.0f}G" if cur_max else ""),
+                     "at": time.time()}
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = REQ_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(reqs))
+        os.replace(tmp, REQ_FILE)
+    except OSError as e:
+        print(f"claude-memcheck: could not file the request ({e}).")
+        return 1
+    print(f"Filed: {project} asks for {ask}"
+          + (f" — {reason.strip()}" if reason.strip() else ""))
+    print("the owner gets it on Discord with a one-tap grant; a grant applies live,")
+    print("so nothing restarts. Until then, stay inside the current cap:")
+    print("say what you're waiting on instead of pushing through it.")
+    return 0
+
+
+def read(cg: Path, name: str):
+    try:
+        v = (cg / name).read_text().strip()
+    except OSError:
+        return None
+    return None if v == "max" else int(v) if v.isdigit() else v
+
+
+def kv(cg: Path, name: str) -> dict:
+    try:
+        return {k: int(v) for k, v in
+                (l.split()[:2] for l in (cg / name).read_text().splitlines())}
+    except (OSError, ValueError):
+        return {}
+
+
+def main() -> int:
+    try:
+        rel = Path("/proc/self/cgroup").read_text().strip().split("::", 1)[1]
+    except (OSError, IndexError):
+        print("claude-memcheck: can't read /proc/self/cgroup (not cgroup v2?)")
+        return 0
+    cg = Path("/sys/fs/cgroup") / rel.lstrip("/")
+    # Walk up to the session scope: the shell running this may sit in a child
+    # cgroup, and the caps live on the scope itself.
+    while cg != Path("/sys/fs/cgroup") and read(cg, "memory.max") is None \
+            and not cg.name.endswith(".scope"):
+        cg = cg.parent
+    high, mx = read(cg, "memory.high"), read(cg, "memory.max")
+    cur = read(cg, "memory.current") or 0
+    # Working set = usage minus inactive page cache: the number the kernel
+    # actually has to find room for. Raw memory.current counts reclaimable
+    # file cache and would cry wolf after every big build.
+    stat = kv(cg, "memory.stat")
+    used = max(0, cur - stat.get("inactive_file", 0))
+    swap, swap_max = read(cg, "memory.swap.current") or 0, read(cg, "memory.swap.max")
+    ev = kv(cg, "memory.events")
+
+    if high is None and mx is None:
+        mi = {l.split(":")[0]: int(l.split()[1]) * 1024
+              for l in Path("/proc/meminfo").read_text().splitlines()}
+        avail = mi.get("MemAvailable", 0)
+        verdict = 0 if avail > 4 * GB else 1 if avail > 2 * GB else 2
+        if not quiet:
+            print(f"Session is NOT memory-capped ({cg.name}).")
+            print(f"  machine available  {avail / GB:5.1f} GB of {mi.get('MemTotal', 0) / GB:.1f} GB")
+            print(f"  verdict            {('OK', 'CAUTION', 'STOP')[verdict]}")
+        return verdict
+
+    if "--request" in " ".join(argv):
+        ask = _arg("--request")
+        if not ask:
+            print("Usage: claude-memcheck --request <size> [--reason \"why\"]")
+            return 1
+        return file_request(cg.name, ask, _arg("--reason"), mx)
+
+    soft = high or mx
+    ratio = used / soft
+    verdict = 0
+    if ratio >= 0.70 or swap > 64 * 1024 ** 2:
+        verdict = 1
+    if ratio >= 0.90 or (swap_max and swap >= 0.25 * swap_max) or ev.get("oom_kill", 0):
+        verdict = 2
+
+    if not quiet:
+        print(f"Memory budget for {cg.name}")
+        print(f"  working set   {used / GB:5.1f} GB  ({ratio:4.0%} of the {soft / GB:.1f} GB soft cap)")
+        print(f"  headroom      {max(0, soft - used) / GB:5.1f} GB before throttling starts")
+        if mx:
+            print(f"  hard cap      {mx / GB:5.1f} GB — the whole session is killed here")
+        print(f"  swap          {swap / GB:5.1f} GB" + (f" of {swap_max / GB:.1f} GB" if swap_max else ""))
+        print(f"  throttled     {ev.get('high', 0)} times so far · OOM kills {ev.get('oom_kill', 0)}")
+        why = {0: "plenty of room",
+               1: "don't start anything new and heavy",
+               2: "shed load now — stop emulators / build daemons / parallel jobs"}
+        print(f"  verdict       {('OK', 'CAUTION', 'STOP')[verdict]} — {why[verdict]}")
+        project = project_of(cg.name)
+        grant = _load(GRANT_FILE, {}).get(project)
+        req = _load(REQ_FILE, {}).get(project)
+        if grant:
+            print(f"  granted       the owner lifted this session to {grant.get('high')} / "
+                  f"{grant.get('max')}")
+        if req and req.get("status") == "pending":
+            print(f"  requested     {req.get('ask_max')} — waiting on the owner's /mem grant")
+        elif req and req.get("status") == "denied":
+            print(f"  requested     {req.get('ask_max')} — denied; shrink the job instead")
+        elif verdict and not grant:
+            print("  need more?    claude-memcheck --request <size> --reason \"why\"")
+    return verdict
+
+
+if __name__ == "__main__":
+    sys.exit(main())

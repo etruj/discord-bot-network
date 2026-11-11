@@ -1,0 +1,19 @@
+[Unit]
+Description=Claude Project Manager (Discord bot)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/claude-pm/claude_pm.py
+# The Python logger's FileHandler owns ~/.claude_pm.log directly. Send the
+# console stream to the journal instead — appending it to the same file too
+# would duplicate every line. View the stream with: journalctl --user -u claude-pm
+Restart=on-failure
+RestartSec=10
+# Kill only the Python process on restart — tmux server and its sessions survive.
+KillMode=process
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

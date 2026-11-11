@@ -1,0 +1,14 @@
+# The bot
+discord.py>=2.3.0
+# The engine (engine/protobot)
+numpy
+opencv-python-headless
+Pillow
+trimesh
+shapely
+matplotlib
+scipy
+# Tests
+pytest
+# System packages, not pip: OpenSCAD 2025 or newer with the manifold backend
+# (scripts/install_openscad.sh), plus admesh and xvfb (see README.md).

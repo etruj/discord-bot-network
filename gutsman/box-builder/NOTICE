@@ -1,0 +1,16 @@
+box-builder — bundled third-party content
+=========================================
+
+tools/monoscad/rugged-box/
+    "Rugged Storage Box" parametric OpenSCAD model
+    (c) smkent (GitHub) / bulbasaur0 (Printables)
+    Source : https://github.com/smkent/monoscad
+    Revision bundled: a980c0e
+    License: Creative Commons Attribution-ShareAlike 4.0 International
+             (see tools/monoscad/rugged-box/LICENSE)
+
+    Bundled unmodified so builds work offline and stay reproducible.
+    Derivative works must keep this attribution and the CC BY-SA 4.0 license.
+
+Everything under scripts/ (wizard, validation, tests, packaging) is the
+box-builder wrapper around that engine.

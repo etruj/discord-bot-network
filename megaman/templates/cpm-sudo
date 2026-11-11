@@ -1,0 +1,224 @@
+#!/usr/bin/python3 -I
+"""cpm-sudo — the sudo gate for claude-pm sessions.
+
+Installed root-owned at /usr/local/sbin/cpm-sudo by install-sudo-gate.sh and
+reached via sudoers (`<owner> ALL=(root) NOPASSWD: /usr/local/sbin/cpm-sudo`).
+Every Claude session runs as the owner, so sudoers alone can't tell them apart; this
+gate decides per *caller session*, read from the caller's systemd scope:
+
+  privileged scope (policy.json; default: claude-cp-claude-pm.scope)
+      → anything: the original sudo arguments are re-run as root.
+  claude-cp-<p>.scope / claude-job-<p>.scope
+      → only scripts the owner approved for project <p>, pinned by SHA-256
+        (editing a script voids its approval), plus commands an approved
+        script itself runs via sudo (launch.sh's `$SUDO …` pattern).
+  claude-pm.service (the bot) → `--approve/--revoke` only (Discord /sudo).
+  anything else → refused.
+
+Policy and approvals live in /etc/cpm-sudo/ (root-owned): nothing a session can
+edit decides what it may do.
+
+LIMIT, stated plainly: this is a guardrail, not a security boundary. All
+sessions are the same Unix user, so a session that sets out to escalate can
+impersonate the privileged one (tmux send-keys into it, or move a process into
+its cgroup). Stopping that would take a separate Unix user for project sessions.
+"""
+import hashlib
+import json
+import os
+import sys
+
+ETC = "/etc/cpm-sudo"
+POLICY = os.path.join(ETC, "policy.json")
+APPROVED = os.path.join(ETC, "approved.json")
+BOT_SCOPE = "claude-pm.service"
+INTERPRETERS = {"bash", "sh", "dash", "zsh", "python3", "python", "perl"}
+SAFE_FLAGS = {"-n", "-E", "-H", "--preserve-env", "--non-interactive", "--"}
+
+
+# ── pure logic (unit-tested; no I/O) ───────────────────────────────────────
+def scope_project(scope: str):
+    """'claude-cp-webapp.scope' -> ('cp', 'webapp'); else (None, None)."""
+    if not scope.endswith(".scope"):
+        return None, None
+    base = scope[:-len(".scope")]
+    for kind in ("cp", "job"):
+        pfx = f"claude-{kind}-"
+        if base.startswith(pfx) and len(base) > len(pfx):
+            return kind, base[len(pfx):]
+    return None, None
+
+
+def strip_flags(args: list):
+    """Drop harmless sudo flags; None if any other flag (-u, -s, -i, …) is used."""
+    out = list(args)
+    while out and out[0].startswith("-"):
+        if out[0] not in SAFE_FLAGS:
+            return None
+        if out.pop(0) == "--":
+            break
+    return out
+
+
+def script_of(argv: list, cwd: str):
+    """Absolute path of the script an argv runs, or None.
+    `./x.sh`, `/abs/x.sh`, `bash x.sh`, `python3 tool.py` all resolve."""
+    if not argv:
+        return None
+    first = argv[0]
+    if os.path.basename(first) in INTERPRETERS:
+        rest = [a for a in argv[1:] if not a.startswith("-")]
+        if not rest:
+            return None
+        first = rest[0]
+    elif "/" not in first:
+        return None  # a bare command name (dnf, rm, …) is never a script
+    return os.path.realpath(os.path.join(cwd, first))
+
+
+def is_approved(path: str, project: str, approvals: dict, sha_of) -> str:
+    """'' if approved and unchanged, else the reason it isn't."""
+    want = approvals.get(project, {}).get(path)
+    if not want:
+        return "not approved"
+    got = sha_of(path)
+    if got is None:
+        return "missing"
+    return "" if got == want else "changed since it was approved"
+
+
+def decide(caller_scope, args, cwd, ancestors, policy, approvals, sha_of):
+    """('run', argv) | ('sudo', args) | ('approve'|'revoke', args) | ('deny', why).
+    ancestors: [(argv, cwd)] for processes above the caller, inside its scope."""
+    if caller_scope in policy.get("privileged_scopes", []):
+        return "sudo", args
+    if args[:1] in (["--approve"], ["--revoke"]):
+        if caller_scope == BOT_SCOPE:
+            return args[0][2:], args[1:]
+        return "deny", "only the claude-pm bot (Discord /sudo) can approve or revoke"
+    kind, project = scope_project(caller_scope)
+    if not project:
+        return "deny", f"caller is not a claude-pm session ({caller_scope})"
+    argv = strip_flags(args)
+    if argv is None:
+        return "deny", "sudo flags other than -n/-E/-H are not allowed for sessions"
+    if not argv:
+        return "deny", "no command given"
+    # 1) running an approved script directly: `sudo tools/x.sh …`
+    path = script_of(argv, cwd)
+    if path:
+        why = is_approved(path, project, approvals, sha_of)
+        if not why:
+            return "run", argv
+        return "deny", (f"`{path}` is {why} for project {project}. Ask the owner to "
+                        f"approve it from Discord: /sudo approve {project} {path}")
+    # 2) a command run BY an approved script (launch.sh's `$SUDO dnf …`)
+    for a_argv, a_cwd in ancestors:
+        a_path = script_of(a_argv, a_cwd)
+        if a_path and not is_approved(a_path, project, approvals, sha_of):
+            return "run", argv
+    return "deny", (f"sessions can't run `{argv[0]}` as root directly. Put the root "
+                    f"work in a script in the project, have the owner approve it "
+                    f"(/sudo approve {project} <script>), then run `sudo <script>`.")
+
+
+# ── I/O ────────────────────────────────────────────────────────────────────
+def _status(pid):
+    d = {}
+    with open(f"/proc/{pid}/status") as f:
+        for line in f:
+            k, _, v = line.partition(":")
+            d[k] = v.split()
+    return d
+
+
+def _scope(pid):
+    with open(f"/proc/{pid}/cgroup") as f:
+        return f.read().strip().rsplit("/", 1)[-1]
+
+
+def _argv(pid):
+    with open(f"/proc/{pid}/cmdline", "rb") as f:
+        return [a.decode(errors="replace") for a in f.read().split(b"\0") if a]
+
+
+def caller_chain():
+    """(caller_scope, ancestors-in-same-scope). The caller is the first
+    ancestor that isn't sudo itself: sudo's PAM session moves the sudo process
+    into a fresh session-N.scope, but its parent is still in the real one."""
+    pid = os.getppid()
+    while pid > 1 and _status(pid)["Name"][0] == "sudo":
+        pid = int(_status(pid)["PPid"][0])
+    scope = _scope(pid)
+    ancestors = []
+    p = pid
+    while p > 1 and len(ancestors) < 32:
+        try:
+            if _scope(p) != scope:
+                break
+            ancestors.append((_argv(p), os.readlink(f"/proc/{p}/cwd")))
+            p = int(_status(p)["PPid"][0])
+        except OSError:
+            break
+    return scope, ancestors
+
+
+def sha_of(path):
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def load(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def save_approvals(data):
+    tmp = APPROVED + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=1, sort_keys=True)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, APPROVED)
+
+
+def main(argv):
+    if os.geteuid() != 0:
+        print("cpm-sudo: must be run via sudo", file=sys.stderr)
+        return 1
+    policy = load(POLICY, {})
+    approvals = load(APPROVED, {})
+    scope, ancestors = caller_chain()
+    cwd = os.getcwd()
+    action, payload = decide(scope, argv, cwd, ancestors, policy, approvals, sha_of)
+
+    if action == "sudo":           # privileged: re-run the original sudo as root
+        os.execv("/usr/bin/sudo", ["sudo"] + payload)
+    if action == "run":
+        os.execvp(payload[0], payload)
+    if action == "approve":
+        project, path = payload[0], os.path.realpath(payload[1])
+        root = os.path.realpath(os.path.join(policy.get("projects_root", ""), project))
+        if not path.startswith(root + os.sep) or not os.path.isfile(path):
+            print(f"cpm-sudo: {path} is not a file inside {root}", file=sys.stderr)
+            return 2
+        approvals.setdefault(project, {})[path] = sha_of(path)
+        save_approvals(approvals)
+        print(approvals[project][path])
+        return 0
+    if action == "revoke":
+        project, path = payload[0], os.path.realpath(payload[1])
+        gone = approvals.get(project, {}).pop(path, None)
+        save_approvals(approvals)
+        return 0 if gone else 3
+    print(f"cpm-sudo: denied — {payload}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

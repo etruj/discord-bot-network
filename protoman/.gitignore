@@ -1,0 +1,15 @@
+# Secrets: never commit these
+.env
+.protoman.json
+*.token
+
+# Generated at runtime
+protoman-parts/
+data/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/

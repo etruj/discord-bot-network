@@ -1,0 +1,21 @@
+# Plan: {{PROJECT_NAME}}
+
+> {{PROJECT_DESCRIPTION}}
+
+## Overview
+{{PLAN_OVERVIEW}}
+
+## Phase 1 — Foundation
+{{PHASE_1}}
+
+## Phase 2 — Core Features
+{{PHASE_2}}
+
+## Phase 3 — Polish & Deploy
+{{PHASE_3}}
+
+## Open Questions
+{{OPEN_QUESTIONS}}
+
+---
+*Generated: {{GENERATED_DATE}}*

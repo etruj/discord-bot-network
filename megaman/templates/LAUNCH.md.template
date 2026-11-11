@@ -1,0 +1,73 @@
+# Launch Configuration: {{PROJECT_NAME}}
+
+## Overview
+This project uses a standardized `launch.sh` script managed by MegaMan (the project bot).
+MegaMan will execute, monitor, and manage the running process — **do not change the contract below**.
+
+## Launch Type
+{{LAUNCH_TYPE_SECTION}}
+
+## Sudo Requirements
+{{LAUNCH_SUDO_SECTION}}
+
+## launch.sh Contract
+
+The `launch.sh` script in the project root **must** follow these rules exactly:
+
+### Structure
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_NAME="{{PROJECT_NAME}}"
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOG_FILE="${PROJECT_DIR}/launch.log"
+PORT={{LAUNCH_PORT}}
+
+# ── Startup ──────────────────────────────────────────────────────────────
+echo "[$(date -Iseconds)] Starting ${PROJECT_NAME}..." | tee -a "$LOG_FILE"
+
+# Your actual launch command goes here.
+# All stdout and stderr MUST be appended to $LOG_FILE.
+# Example for a web server:
+#   exec python -m uvicorn main:app --host 0.0.0.0 --port "$PORT" >> "$LOG_FILE" 2>&1
+# Example for a CLI tool:
+#   exec python main.py "$@" >> "$LOG_FILE" 2>&1
+
+{{LAUNCH_COMMAND_PLACEHOLDER}}
+```
+
+### Required Conventions
+1. **Shebang**: `#!/usr/bin/env bash` — always.
+2. **`set -euo pipefail`** — fail fast on errors.
+3. **`PROJECT_DIR`** — always resolve to the script's own directory.
+4. **`LOG_FILE`** — always `${PROJECT_DIR}/launch.log`. Append, never truncate.
+5. **`PORT`** — set even if unused (use `0` for non-network projects). MegaMan reads this.
+6. **`exec`** — the final command **must** use `exec` so the process replaces the shell (MegaMan tracks the PID).
+7. **Exit codes**: `0` = clean shutdown, non-zero = error.
+8. **No backgrounding** — do not use `&` or `nohup`. MegaMan handles that via tmux.
+9. **No hardcoded paths** — use `$PROJECT_DIR` for everything relative.
+
+### Health Check (web services only)
+If PORT > 0, MegaMan expects a health endpoint at:
+```
+GET http://localhost:${PORT}/health
+```
+Return HTTP 200 with any body. Add this to your app early in development.
+
+## What MegaMan Does
+- `run <project>` — executes `launch.sh` in a monitored tmux session
+- `halt <project>` — stops the running process
+- `jobs` — lists all running project jobs with status
+- `output <project>` — shows recent log output
+
+## What Claude Code Should Do
+- Implement the project logic
+- Fill in the `exec ...` line in `launch.sh` with the real start command
+- Add a `/health` endpoint if this is a web service
+- Keep `launch.log` in `.gitignore`
+- If sudo is required:
+  - Use the `$SUDO` variable in your exec command
+  - Configure sudo NOPASSWD for the specific commands needed
+  - Example: `exec $SUDO python -m uvicorn main:app --port 80`
+  - Add a sudoers entry: `username ALL=(ALL) NOPASSWD: /usr/bin/python3, /usr/bin/node`

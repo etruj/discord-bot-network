@@ -1,0 +1,16 @@
+# Secrets and per-machine config: never commit
+.env
+*.token
+.claude_pm.json
+.boxbot.json
+.protoman.json
+botFiles.md
+# Generated
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.log
+out/
+# Working log for the repo owner: keep out of the public repo
+LOG.md
